@@ -1,8 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 #
-#    Copyright 2015, John Mora, johmora12@engineer.com
-#    Original Work by Lukas Lueg (c) 2008-2011.
+#    Copyright 2008-2011, Lukas Lueg, lukas.lueg@gmail.com
 #
 #    This file is part of Pyrit.
 #
@@ -19,24 +18,29 @@
 #    You should have received a copy of the GNU General Public License
 #    along with Pyrit.  If not, see <http://www.gnu.org/licenses/>.
 
-import sys
-import platform
 from distutils.core import setup, Extension
 from distutils.command.build_ext import build_ext
 from distutils.unixccompiler import UnixCCompiler
 from distutils.errors import CompileError
+import subprocess
+import sys
+import re
 
-
-VERSION = '0.5.1'
+VERSION = '0.5.0'
 
 UnixCCompiler.src_extensions.append('.S')
 
 
 EXTRA_COMPILE_ARGS = ['-Wall', '-fno-strict-aliasing',
+                      '-Wno-int-conversion',
+                      '-Wno-incompatible-pointer-types',
+                      '-Wno-error=int-conversion',
+                      '-Wno-error=incompatible-pointer-types',
+                      '-Wno-return-mismatch',
                       '-DVERSION="%s"' % (VERSION,)]
-# Support for AES-NI-intrinsics is not found everyhwere
-if sys.platform in ('darwin', 'linux2') and \
-   platform.machine() in ('x86_64', 'i386'):
+# Support for AES-NI-intrinsics is not found everywhere
+# Python 3 uses 'linux' instead of 'linux2'
+if sys.platform == 'darwin' or sys.platform.startswith('linux'):
     EXTRA_COMPILE_ARGS.extend(('-maes', '-mpclmul'))
 
 
@@ -50,13 +54,13 @@ class LazyBuilder(build_ext):
 
     def build_extension(self, ext):
         try:
-            return super().build_extension(ext)
+            return build_ext.build_extension(self, ext)
         except CompileError:
             if ext.extra_compile_args and '-maes' in ext.extra_compile_args:
                 print("Failed to build; Compiling without AES-NI")
                 ext.extra_compile_args.remove('-maes')
                 ext.extra_compile_args.remove('-mpclmul')
-                return super().build_extension(ext)
+                return build_ext.build_extension(self, ext)
             else:
                 raise
 
@@ -67,41 +71,39 @@ cpu_extension = Extension(name='cpyrit._cpyrit_cpu',
                     libraries = ['crypto', 'pcap'],
                     extra_compile_args=EXTRA_COMPILE_ARGS)
 
-setup_args = {
-        'name': 'pyrit',
-        'version': VERSION,
-        'description': 'GPU-accelerated attack against WPA-PSK authentication',
-        'long_description': \
+setup_args = dict(
+        name = 'pyrit',
+        version = VERSION,
+        description = 'GPU-accelerated attack against WPA-PSK authentication',
+        long_description = \
             "Pyrit allows to create massive databases, pre-computing part " \
             "of the WPA/WPA2-PSK authentication phase in a space-time-" \
             "tradeoff. Exploiting the computational power of Many-Core- " \
             "and other platforms through ATI-Stream, Nvidia CUDA and OpenCL " \
             ", it is currently by far the most powerful attack against one " \
             "of the world's most used security-protocols.",
-        'license': 'GNU General Public License v3',
-        'author': 'Lukas Lueg',
-        'author_email': 'lukas.lueg@gmail.com',
-        'url': 'https://github.com/JPaulMora/Pyrit',
-        'maintainer': 'John Mora',
-        'maintainer_email': 'johmora12@engineer.com',
-        'classifiers': \
+        license = 'GPL-3.0-or-later',
+        author = 'Lukas Lueg',
+        author_email = 'lukas.lueg@gmail.com',
+        url = 'https://github.com/JPaulMora/Pyrit',
+        maintainer = 'John Mora',
+        maintainer_email = 'johmora12@engineer.com',
+        classifiers = \
               ['Development Status :: 4 - Beta',
                'Environment :: Console',
-               'License :: OSI Approved :: GNU General Public License (GPL)',
                'Natural Language :: English',
                'Operating System :: OS Independent',
                'Programming Language :: Python',
                'Topic :: Security'],
-        'platforms': ['any'],
-        'packages': ['cpyrit'],
-        'py_modules': ['pyrit_cli', 'cpyrit.cpyrit',
+        platforms = ['any'],
+        packages = ['cpyrit'],
+        py_modules = ['pyrit_cli', 'cpyrit.cpyrit',
                       'cpyrit.util', 'cpyrit.pckttools',
                       'cpyrit.config', 'cpyrit.network'],
-        'scripts': ['pyrit'],
-        'ext_modules': [cpu_extension],
-        'cmdclass': {'build_ext': LazyBuilder},
-        'options': {'install': {'optimize': 1}}
-}
+        scripts = ['pyrit'],
+        ext_modules = [cpu_extension],
+        cmdclass = {'build_ext': LazyBuilder},
+        options = {'install': {'optimize': 1}})
 
 if __name__ == '__main__':
     setup(**setup_args)

@@ -1,7 +1,6 @@
 # -*- coding: UTF-8 -*-
 #
-#    Copyright 2015, John Mora, johmora12@engineer.com
-#    Original Work by Lukas Lueg (c) 2008-2011.
+#    Copyright 2008-2011, Lukas Lueg, lukas.lueg@gmail.com
 #
 #    This file is part of Pyrit.
 #
@@ -24,7 +23,7 @@ import hashlib
 import socket
 import time
 import threading
-import xmlrpclib
+import xmlrpc.client
 
 import storage
 import util
@@ -37,10 +36,10 @@ class NetworkClient(util.Thread):
         def __init__(self, client):
             threading.Thread.__init__(self)
             self.client = client
-            self.server = xmlrpclib.ServerProxy("http://%s:%s" % \
+            self.server = xmlrpc.client.ServerProxy("http://%s:%s" % \
                                                 client.srv_addr)
             self.shallStop = False
-            self.setDaemon(True)
+            self.daemon = True
             self.start()
 
         def run(self):
@@ -64,7 +63,7 @@ class NetworkClient(util.Thread):
 
     def __init__(self, srv_addr, enqueue_callback, known_uuids):
         util.Thread.__init__(self)
-        self.server = xmlrpclib.ServerProxy("http://%s:%s" % srv_addr)
+        self.server = xmlrpc.client.ServerProxy("http://%s:%s" % srv_addr)
         self.srv_uuid, self.uuid = self.server.register(";".join(known_uuids))
         if not self.uuid:
             raise KeyError("Loop detected to %s" % self.srv_uuid)
@@ -75,24 +74,24 @@ class NetworkClient(util.Thread):
         self.stat_scattered = self.stat_sent = 0
         self.results = []
         self.lastseen = time.time()
-        self.setDaemon(True)
+        self.daemon = True
 
     def run(self):
         self.gatherer = self.NetworkGatherer(self)
         try:
-            while self.gatherer.isAlive() and self.shallStop is False:
+            while self.gatherer.is_alive() and self.shallStop is False:
                 with self.cv:
                     while len(self.results) == 0 and self.shallStop is False \
-                          and self.gatherer.isAlive():
+                          and self.gatherer.is_alive():
                         self.cv.wait(1)
                     if self.shallStop is not False \
-                     or not self.gatherer.isAlive():
+                     or not self.gatherer.is_alive():
                         break
                     solvedPMKs = self.results.pop(0)
                 buf = ''.join(solvedPMKs)
                 md = hashlib.sha1()
                 md.update(buf)
-                encoded_buf = xmlrpclib.Binary(md.digest() + buf)
+                encoded_buf = xmlrpc.client.Binary(md.digest() + buf)
                 self.server.scatter(self.uuid, encoded_buf)
                 self.stat_sent += len(solvedPMKs)
                 self.ping()
@@ -107,7 +106,7 @@ class NetworkClient(util.Thread):
     def scatter(self, results):
         with self.cv:
             self.results.append(results)
-            self.cv.notifyAll()
+            self.cv.notify_all()
             self.stat_scattered += len(results)
 
     def ping(self):
@@ -126,14 +125,14 @@ class NetworkServer(util.Thread):
         self.stat_gathered = self.stat_enqueued = 0
         self.stat_scattered = 0
         self.enqueue_lock = threading.Lock()
-        self.setDaemon(True)
+        self.daemon = True
         self.start()
 
     def addClient(self, srv_addr):
         with self.clients_lock:
-            if any(c.srv_addr == srv_addr for c in self.clients.itervalues()):
+            if any(c.srv_addr == srv_addr for c in self.clients.values()):
                 return
-            known_uuids = set(c.srv_uuid for c in self.clients.itervalues())
+            known_uuids = set(c.srv_uuid for c in self.clients.values())
             if self.cp.ncore_uuid is not None:
                 known_uuids.add(self.cp.ncore_uuid)
             try:
@@ -144,7 +143,8 @@ class NetworkServer(util.Thread):
                 client.start()
                 self.clients[client.uuid] = client
 
-    def enqueue(self, uuid, (essid, pwlist)):
+    def enqueue(self, uuid, essid_pwlist):
+        essid, pwlist = essid_pwlist
         with self.clients_lock:
             if uuid not in self.clients:
                 raise KeyError("Client unknown or timed-out")
@@ -168,16 +168,16 @@ class NetworkServer(util.Thread):
                         self.stat_scattered += len(solvedPMKs)
             with self.clients_lock:
                 for client in self.clients.values():
-                    if not client.isAlive() or \
+                    if not client.is_alive() or \
                      time.time() - client.lastseen > 15.0:
                         del self.clients[client.uuid]
-            if not self.cp.isAlive():
+            if not self.cp.is_alive():
                 self.shallStop == True
                 raise RuntimeError
 
     def __contains__(self, srv_addr):
         with self.clients_lock:
-            i = self.clients.itervalues()
+            i = self.clients.values()
             return any(c.srv_addr == srv_addr for c in i)
 
     def __len__(self):
@@ -191,7 +191,7 @@ class NetworkServer(util.Thread):
     def shutdown(self):
         self.shallStop = True
         with self.clients_lock:
-            for client in self.clients.itervalues():
+            for client in self.clients.values():
                 client.shutdown()
         self.join()
 
@@ -217,7 +217,7 @@ class NetworkAnnouncer(util.Thread):
                                        socket.SO_BROADCAST, 1)
         else:
             self.bcast_sckt = None
-        self.setDaemon(True)
+        self.daemon = True
         self.start()
 
     def run(self):
@@ -239,7 +239,7 @@ class NetworkAnnouncementListener(util.Thread):
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.bind(('', 17935))
-        self.setDaemon(True)
+        self.daemon = True
         self.start()
 
     def run(self):
@@ -258,7 +258,7 @@ class NetworkAnnouncementListener(util.Thread):
                     with self.cv:
                         if addr not in self.servers:
                             self.servers.append(addr)
-                            self.cv.notifyAll()
+                            self.cv.notify_all()
 
     def waitForAnnouncement(self, block=True, timeout=None):
         t = time.time()
@@ -282,7 +282,7 @@ class NetworkAnnouncementListener(util.Thread):
     def __iter__(self):
         return self
 
-    def next(self):
+    def __next__(self):
         return self.waitForAnnouncement(block=True)
 
     def shutdown(self):
